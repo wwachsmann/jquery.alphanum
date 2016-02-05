@@ -8,7 +8,7 @@
 
 	// API ///////////////////////////////////////////////////////////////////
 	$.fn.alphanum = function(settings) {
-		
+
 		var combinedSettings = getCombinedSettingsAlphaNum(settings);
 
 		var $collection = this;
@@ -17,9 +17,9 @@
 
 		return this;
 	};
-	
+
 	$.fn.alpha = function(settings) {
-		
+
 		var defaultAlphaSettings = getCombinedSettingsAlphaNum("alpha");
 		var combinedSettings = getCombinedSettingsAlphaNum(settings, defaultAlphaSettings);
 
@@ -29,9 +29,9 @@
 
 		return this;
 	};
-	
+
 	$.fn.numeric = function(settings) {
-		
+
 		var combinedSettings = getCombinedSettingsNum(settings);
 		var $collection = this;
 
@@ -43,12 +43,14 @@
 
 		return this;
 	};
-	
+
 	// End of API /////////////////////////////////////////////////////////////
-	
-	
+
+
 	// Start Settings ////////////////////////////////////////////////////////
-	
+
+	var fNoop = function(){};
+
 	var DEFAULT_SETTINGS_ALPHANUM = {
 		allow              : '',    // Allow extra characters
 		disallow           : '',    // Disallow extra characters
@@ -59,12 +61,13 @@
 		allowLower         : true,  // Allow lower case characters
 		allowCaseless      : true,  // Allow characters that don't have both upper & lower variants - eg Arabic or Chinese
 		allowLatin         : true,  // a-z A-Z
-		allowOtherCharSets : true,  // eg é, Á, Arabic, Chinese etc
+		allowOtherCharSets : true,  // eg ï¿½, ï¿½, Arabic, Chinese etc
 		forceUpper         : false, // Convert lower case characters to upper case
 		forceLower         : false, // Convert upper case characters to lower case
-		maxLength          : NaN    // eg Max Length
-	}
-	
+		maxLength          : NaN,   // eg Max Length,
+		callback           : fNoop
+	};
+
 	var DEFAULT_SETTINGS_NUM = {
 		allowPlus           : false, // Allow the + sign
 		allowMinus          : true,  // Allow the - sign
@@ -75,9 +78,10 @@
 		maxDecimalPlaces    : NaN,   // The max number of decimal places
 		maxPreDecimalPlaces : NaN,   // The max number digits before the decimal point
 		max                 : NaN,   // The max numeric value allowed
-		min                 : NaN    // The min numeric value allowed
-	}
-	
+		min                 : NaN,   // The min numeric value allowed
+		callback            : fNoop
+	};
+
 	// Some pre-defined groups of settings for convenience
 	var CONVENIENCE_SETTINGS_ALPHANUM = {
 		"alpha" : {
@@ -112,38 +116,38 @@
 			allowDecSep  : false
 		}
 	};
-	
-	
+
+
 	var BLACKLIST   = getBlacklistAscii() + getBlacklistNonAscii();
 	var THOU_SEP    = ",";
 	var DEC_SEP     = ".";
 	var DIGITS      = getDigitsMap();
 	var LATIN_CHARS = getLatinCharsSet();
-	
+
 	// Return the blacklisted special chars that are encodable using 7-bit ascii
 	function getBlacklistAscii(){
 		var blacklist = '!@#$%^&*()+=[]\\\';,/{}|":<>?~`.-_';
 		blacklist += " "; // 'Space' is on the blacklist but can be enabled using the 'allowSpace' config entry
 		return blacklist;
 	}
-	
+
 	// Return the blacklisted special chars that are NOT encodable using 7-bit ascii
 	// We want this .js file to be encoded using 7-bit ascii so it can reach the widest possible audience
 	// Higher order chars must be escaped eg "\xAC"
 	// Not too worried about comments containing higher order characters for now (let's wait and see if it becomes a problem)
 	function getBlacklistNonAscii(){
-		var blacklist = 
-			  "\xAC"     // ¬
-			+ "\u20AC"   // €
-			+ "\xA3"     // £
-			+ "\xA6"     // ¦
+		var blacklist =
+			  "\xAC"     // ï¿½
+			+ "\u20AC"   // ï¿½
+			+ "\xA3"     // ï¿½
+			+ "\xA6"     // ï¿½
 			;
 		return blacklist;
 	}
-	
+
 	// End Settings ////////////////////////////////////////////////////////
-	
-	
+
+
 	// Implementation details go here ////////////////////////////////////////////////////////
 
 	function setupEventHandlers($textboxes, trimFunction, settings) {
@@ -170,41 +174,45 @@
 				})
 
 				.on("keypress.alphanum", function(e){
-				
-				// Determine which key is pressed.
-				// If it's a control key, then allow the event's default action to occur eg backspace, tab
-				var charCode = !e.charCode ? e.which : e.charCode;
-				if(isControlKey(charCode)
-					|| e.ctrlKey
-					|| e.metaKey ) // cmd on MacOS
-					return;
 
-				var newChar         = String.fromCharCode(charCode);
+					// Determine which key is pressed.
+					// If it's a control key, then allow the event's default action to occur eg backspace, tab
+					var charCode = !e.charCode ? e.which : e.charCode;
+					var newChar         = String.fromCharCode(charCode);
 
-				// Determine if some text was selected / highlighted when the key was pressed
-				var selectionObject = $textbox.selection();
-				var start = selectionObject.start;
-				var end   = selectionObject.end;
+					// Determine if some text was selected / highlighted when the key was pressed
+					var selectionObject = $textbox.selection();
+					var start = selectionObject.start;
+					var end   = selectionObject.end;
 
-				var textBeforeKeypress  = $textbox.val();
-				
-				// The new char may be inserted:
-				//  1) At the start
-				//  2) In the middle
-				//  3) At the end
-				//  4) User highlights some text and then presses a key which would replace the highlighted text
-				//
-				// Here we build the string that would result after the keypress.
-				// If the resulting string is invalid, we cancel the event.
-				// Unfortunately, it isn't enough to just check if the new char is valid because some chars
-				// are position sensitive eg the decimal point '.'' or the minus sign '-'' are only valid in certain positions.
-				var potentialTextAfterKeypress = textBeforeKeypress.substring(0, start) + newChar + textBeforeKeypress.substring(end);
-				var validatedText              = trimFunction(potentialTextAfterKeypress, settings);
+					if(isControlKey(charCode) || e.ctrlKey || e.metaKey) { // cmd on MacOS
+						if( settings.allow.indexOf(newChar) >=0 ) {
+							fireCallback(newChar, charCode, start, end, e, settings);
+						}
+						return;
+					}
 
-				// If the keypress would cause the textbox to contain invalid characters, then cancel the keypress event
-				if(validatedText != potentialTextAfterKeypress)
-					e.preventDefault();
-			});
+					var textBeforeKeypress  = $textbox.val();
+
+					// The new char may be inserted:
+					//  1) At the start
+					//  2) In the middle
+					//  3) At the end
+					//  4) User highlights some text and then presses a key which would replace the highlighted text
+					//
+					// Here we build the string that would result after the keypress.
+					// If the resulting string is invalid, we cancel the event.
+					// Unfortunately, it isn't enough to just check if the new char is valid because some chars
+					// are position sensitive eg the decimal point '.'' or the minus sign '-'' are only valid in certain positions.
+					var potentialTextAfterKeypress = textBeforeKeypress.substring(0, start) + newChar + textBeforeKeypress.substring(end);
+					var validatedText              = trimFunction(potentialTextAfterKeypress, settings);
+
+					// If the keypress would cause the textbox to contain invalid characters, then cancel the keypress event
+					if(validatedText != potentialTextAfterKeypress)
+						e.preventDefault();
+					else
+						fireCallback(newChar, charCode, start, end, e, settings);
+				});
 		});
 
 	}
@@ -242,14 +250,14 @@
 
 		return true;
 	}
-	
+
 	// One way to prevent a character being entered is to cancel the keypress event.
 	// However, this gets messy when you have to deal with things like copy paste which isn't a keypress.
 	// Which event gets fired first, keypress or keyup? What about IE6 etc etc?
 	// Instead, it's easier to allow the 'bad' character to be entered and then to delete it immediately after.
-	
+
 	function trimTextbox($textBox, trimFunction, settings, pastedText){
-		
+
 		var inputString = $textBox.val();
 
 		if(inputString == "" && pastedText.length > 0)
@@ -261,16 +269,16 @@
 			return;
 		
 		var caretPos = $textBox.alphanum_caret();
-		
+
 		$textBox.val(outputString);
-		
+
 		//Reset the caret position
 		if(inputString.length ==(outputString.length + 1))
 			$textBox.alphanum_caret(caretPos - 1);
 		else
 			$textBox.alphanum_caret(caretPos);
 	}
-	
+
 	function getCombinedSettingsAlphaNum(settings, defaultSettings){
 		if(typeof defaultSettings == "undefined")
 			defaultSettings = DEFAULT_SETTINGS_ALPHANUM;
@@ -281,15 +289,15 @@
 			userSettings = {};
 		else
 			userSettings = settings;
-		
+
 		$.extend(combinedSettings, defaultSettings, userSettings);
-		
+
 		if(typeof combinedSettings.blacklist == 'undefined')
 			combinedSettings.blacklistSet = getBlacklistSet(combinedSettings.allow, combinedSettings.disallow);
-		
+
 		return combinedSettings;
 	}
-	
+
 	function getCombinedSettingsNum(settings){
 		var userSettings, combinedSettings = {};
 		if(typeof settings === "string")
@@ -298,13 +306,13 @@
 			userSettings = {};
 		else
 			userSettings = settings;
-		
+
 		$.extend(combinedSettings, DEFAULT_SETTINGS_NUM, userSettings);
-		
+
 		return combinedSettings;
 	}
-	
-	
+
+
 	// This is the heart of the algorithm
 	function alphanum_allowChar(validatedStringFragment, Char, settings){
 
@@ -313,41 +321,41 @@
 
 		if(settings.allow.indexOf(Char) >=0 )
 			return true;
-		
+
 		if(settings.allowSpace && (Char == " "))
 			return true;
-		
+
 		if(!settings.allowNewline && (Char == '\n' || Char == '\r'))
 			return false;
-			
+
 		if(settings.blacklistSet.contains(Char))
 			return false;
-		
+
 		if(!settings.allowNumeric && DIGITS[Char])
 			return false;
-			
+
 		if(!settings.allowUpper && isUpper(Char))
 			return false;
-			
+
 		if(!settings.allowLower && isLower(Char))
 			return false;
-			
+
 		if(!settings.allowCaseless && isCaseless(Char))
 			return false;
-		
+
 		if(!settings.allowLatin && LATIN_CHARS.contains(Char))
 			return false;
-		
+
 		if(!settings.allowOtherCharSets){
 			if(DIGITS[Char] || LATIN_CHARS.contains(Char))
 				return true;
 			else
 				return false;
 		}
-		
+
 		return true;
 	}
-	
+
 	function numeric_allowChar(validatedStringFragment, Char, settings){
 
 		if(DIGITS[Char]) {
@@ -386,7 +394,7 @@
 			if(settings.allowDecSep)
 				return true;
 		}
-		
+
 		return false;
 	}
 
@@ -478,20 +486,20 @@
 
 		return false;
 	}
-	
+
 	/********************************
 	 * Trims a string according to the settings provided
 	 ********************************/
 	function trimAlphaNum(inputString, settings){
-		
+
 		if(typeof inputString != "string")
 			return inputString;
-		
+
 		var inChars = inputString.split("");
 		var outChars = [];
 		var i = 0;
 		var Char;
-		
+
 		for(i=0; i<inChars.length; i++){
 			Char = inChars[i];
 			var validatedStringFragment = outChars.join("");
@@ -501,104 +509,104 @@
 
 		var outputString = outChars.join("");
 
-		if(settings.forceLower) 
+		if(settings.forceLower)
 			outputString = outputString.toLowerCase();
 		else if(settings.forceUpper)
 			outputString = outputString.toUpperCase();
-		
+
 		return outputString;
 	}
-	
+
 	function trimNum(inputString, settings){
 		if(typeof inputString != "string")
 			return inputString;
-		
+
 		var inChars = inputString.split("");
 		var outChars = [];
 		var i = 0;
 		var Char;
-		
+
 		for(i=0; i<inChars.length; i++){
 			Char = inChars[i];
 			var validatedStringFragment = outChars.join("");
 			if(numeric_allowChar(validatedStringFragment, Char, settings))
 				outChars.push(Char);
 		}
-		
+
 		return outChars.join("");
 	}
-	
+
 	function removeUpperCase(inputString){
 		var charArray = inputString.split('');
 		var i = 0;
 		var outputArray = [];
 		var Char;
-		
+
 		for(i=0; i<charArray.length; i++){
 			Char = charArray[i];
 		}
 	}
-	
+
 	function removeLowerCase(inputString){
-		
+
 	}
-	
+
 	function isUpper(Char){
 		var upper = Char.toUpperCase();
 		var lower = Char.toLowerCase();
-		
+
 		if( (Char == upper) && (upper != lower))
 			return true;
 		else
 			return false;
 	}
-	
+
 	function isLower(Char){
 		var upper = Char.toUpperCase();
 		var lower = Char.toLowerCase();
-		
+
 		if( (Char == lower) && (upper != lower))
 			return true;
 		else
 			return false;
 	}
-	
+
 	function isCaseless(Char){
 		if(Char.toUpperCase() == Char.toLowerCase())
 			return true;
 		else
 			return false;
 	}
-	
+
 	function getBlacklistSet(allow, disallow){
-		
+
 		var setOfBadChars  = new Set(BLACKLIST + disallow);
 		var setOfGoodChars = new Set(allow);
-		
+
 		var blacklistSet   = setOfBadChars.subtract(setOfGoodChars);
-		
+
 		return blacklistSet;
 	}
-	
+
 	function getDigitsMap(){
 		var array = "0123456789".split("");
 		var map = {};
 		var i = 0;
 		var digit;
-		
+
 		for(i=0; i<array.length; i++){
 			digit = array[i];
 			map[digit] = true;
 		}
-		
+
 		return map;
 	}
-	
+
 	function getLatinCharsSet(){
 		var lower = "abcdefghijklmnopqrstuvwxyz";
 		var upper = lower.toUpperCase();
 		var azAZ = new Set(lower + upper);
-		
+
 		return azAZ;
 	}
 
@@ -634,7 +642,13 @@
 
 		return true;
 	}
-	
+
+	function fireCallback(newChar, charCode, start, end, event, settings) {
+		if( 'callback' in settings && (typeof settings.callback == 'function' || false) ) {
+			settings.callback(newChar, charCode, start, end, event);
+		}
+	}
+
 	////////////////////////////////////////////////////////////////////////////////////
 	// Implementation of a Set
 	////////////////////////////////////////////////////////////////////////////////////
@@ -644,68 +658,68 @@
 		else
 			this.map = {};
 	}
-	
+
 	Set.prototype.add = function(set){
 	
 		var newSet = this.clone();
-		
+
 		for(var key in set.map)
 			newSet.map[key] = true;
-		
+
 		return newSet;
 	}
-	
+
 	Set.prototype.subtract = function(set){
-		
+
 		var newSet = this.clone();
-		
+
 		for(var key in set.map)
 			delete newSet.map[key];
-			
+
 		return newSet;
 	}
-	
+
 	Set.prototype.contains = function(key){
 		if(this.map[key])
 			return true;
 		else
 			return false;
 	}
-	
+
 	Set.prototype.clone = function(){
 		var newSet = new Set();
-		
+
 		for(var key in this.map)
 			newSet.map[key] = true;
-		
+
 		return newSet;
 	}
 	////////////////////////////////////////////////////////////////////////////////////
-	
+
 	function stringToMap(string){
 		var map = {};
 		var array = string.split("");
 		var i=0;
 		var Char;
-		
+
 		for(i=0; i<array.length; i++){
 			Char = array[i];
 			map[Char] = true;
 		}
-		
+
 		return map;
 	}
-	
+
 	// Backdoor for testing
 	$.fn.alphanum.backdoorAlphaNum = function(inputString, settings){
 		var combinedSettings = getCombinedSettingsAlphaNum(settings);
-		
+
 		return trimAlphaNum(inputString, combinedSettings);
 	};
-	
+
 	$.fn.alphanum.backdoorNumeric = function(inputString, settings){
 		var combinedSettings = getCombinedSettingsNum(settings);
-		
+
 		return trimNum(inputString, combinedSettings);
 	};
 
@@ -734,19 +748,19 @@
 	// Behind the scenes method deals with browser
 	// idiosyncrasies and such
 	function caretTo(el, index) {
-		if (el.createTextRange) { 
-			var range = el.createTextRange(); 
-			range.move("character", index); 
-			range.select(); 
-		} else if (el.selectionStart != null) { 
-			el.focus(); 
-			el.setSelectionRange(index, index); 
+		if (el.createTextRange) {
+			var range = el.createTextRange();
+			range.move("character", index);
+			range.select();
+		} else if (el.selectionStart != null) {
+			el.focus();
+			el.setSelectionRange(index, index);
 		}
 	};
-	
+
 	// Another behind the scenes that collects the
 	// current caret position for an element
-	
+
 	// TODO: Get working with Opera
 	function caretPos(el) {
 		if ("selection" in document) {
@@ -773,22 +787,22 @@
 		if (typeof(index) === "undefined") {
 			return caretPos(this.get(0));
 		}
-		
+
 		return this.queue(function (next) {
 			if (isNaN(index)) {
 				var i = $(this).val().indexOf(index);
-				
+
 				if (offset === true) {
 					i += index.length;
 				} else if (typeof(offset) !== "undefined") {
 					i += offset;
 				}
-				
+
 				caretTo(this, i);
 			} else {
 				caretTo(this, index);
 			}
-			
+
 			next();
 		});
 	};
